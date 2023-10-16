@@ -3,7 +3,7 @@
 [![Mix Tests](https://github.com/tompave/fun_with_flags/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/tompave/fun_with_flags/actions/workflows/test.yml?query=branch%3Amaster)
 [![Code Quality](https://github.com/tompave/fun_with_flags/actions/workflows/quality.yml/badge.svg?branch=master)](https://github.com/tompave/fun_with_flags/actions/workflows/quality.yml?query=branch%3Amaster)  
 [![Hex.pm](https://img.shields.io/hexpm/v/fun_with_flags.svg)](https://hex.pm/packages/fun_with_flags)
-[![hexdocs.pm](https://img.shields.io/badge/docs-1.10.1-brightgreen.svg)](https://hexdocs.pm/fun_with_flags/1.10.1/FunWithFlags.html)
+[![hexdocs.pm](https://img.shields.io/badge/docs-1.11.0-brightgreen.svg)](https://hexdocs.pm/fun_with_flags/1.11.0/FunWithFlags.html)
 [![Hex.pm Downloads](https://img.shields.io/hexpm/dt/fun_with_flags)](https://hex.pm/packages/fun_with_flags)
 [![License](https://img.shields.io/hexpm/l/fun_with_flags.svg)](https://github.com/tompave/fun_with_flags/blob/master/LICENSE.txt)
 [![ElixirWeekly](https://img.shields.io/badge/featured-ElixirWeekly-8e5ab5.svg)](https://elixirweekly.net/issues/43)
@@ -17,7 +17,7 @@ If you're reading this on the [GitHub repo](https://github.com/tompave/fun_with_
 
 FunWithFlags is an OTP application that provides a 2-level storage to save and retrieve feature flags, an Elixir API to toggle and query them, and a [web dashboard](#web-dashboard) as control panel.
 
-It stores flag information in Redis or a relational DB (PostgreSQL or MySQL, with Ecto) for persistence and synchronization across different nodes, but it also maintains a local cache in an ETS table for fast lookups. When flags are added or toggled on a node, the other nodes are notified via PubSub and reload their local ETS caches.
+It stores flag information in Redis or a relational DB (PostgreSQL, MySQL, or SQLite - with Ecto) for persistence and synchronization across different nodes, but it also maintains a local cache in an ETS table for fast lookups. When flags are added or toggled on a node, the other nodes are notified via PubSub and reload their local ETS caches.
 
 ## Content
 
@@ -38,12 +38,14 @@ It stores flag information in Redis or a relational DB (PostgreSQL or MySQL, wit
 * [Configuration](#configuration)
   - [Persistence Adapters](#persistence-adapters)
     - [Ecto Multi-tenancy](#ecto-multi-tenancy)
+    - [Ecto Custom Primary Key Types](#ecto-custom-primary-key-types)
   - [PubSub Adapters](#pubsub-adapters)
 * [Extensibility](#extensibility)
   - [Custom Persistence Adapters](#custom-persistence-adapters)
 * [Application Start Behaviour](#application-start-behaviour)
 * [Testing](#testing)
 * [Development](#development)
+  - [Working with PubSub Locally](#working-with-pubsub-locally)
 
 ## What's a Feature Flag?
 
@@ -495,7 +497,7 @@ In order to have a small installation footprint, the dependencies for the differ
 ```elixir
 def deps do
   [
-    {:fun_with_flags, "~> 1.10.1"},
+    {:fun_with_flags, "~> 1.11.0"},
 
     # either:
     {:redix, "~> 0.9"},
@@ -569,13 +571,13 @@ config :fun_with_flags, :redis,
 
 ### Persistence Adapters
 
-The library comes with two persistence adapters for the [`Redix`](https://hex.pm/packages/redix) and [`Ecto`](https://hex.pm/packages/ecto) libraries, that allow to persist feature flag data in Redis, PostgreSQL or MySQL. In order to use any of them, you must declare the correct optional dependency in the Mixfile (see the [installation](#installation) instructions, above).
+The library comes with two persistence adapters for the [`Redix`](https://hex.pm/packages/redix) and [`Ecto`](https://hex.pm/packages/ecto) libraries, that allow to persist feature flag data in Redis, PostgreSQL, MySQL, or SQLite. In order to use any of them, you must declare the correct optional dependency in the Mixfile (see the [installation](#installation) instructions, above).
 
 The Redis adapter is the default and there is no need to explicitly declare it. All it needs is the Redis connection configuration.
 
 In order to use the Ecto adapter, an Ecto repo must be provided in the configuration. FunWithFlags expects the Ecto repo to be initialized by the host application, which also needs to start and supervise any required processes. If using Phoenix this is managed automatically by the framework, and it's fine to use the same repo used by the rest of the application.
 
-Only PostgreSQL (via [`postgrex`](https://hex.pm/packages/postgrex)) and MySQL (via [`mariaex`](https://hex.pm/packages/mariaex) or [`myxql`](https://hex.pm/packages/myxql)) are supported at the moment. Support for other RDBMSs might come in the future.
+Only PostgreSQL (via [`postgrex`](https://hex.pm/packages/postgrex)), MySQL (via [`mariaex`](https://hex.pm/packages/mariaex) or [`myxql`](https://hex.pm/packages/myxql)), and SQLite (via [`ecto_sqlite3`](https://hex.pm/packages/ecto_sqlite3)) are supported at the moment. Support for other RDBMSs might come in the future.
 
 To configure the Ecto adapter:
 
@@ -594,8 +596,9 @@ config :my_app, MyApp.Repo,
 config :fun_with_flags, :persistence,
   adapter: FunWithFlags.Store.Persistent.Ecto,
   repo: MyApp.Repo,
-  ecto_table_name: "your_table_name" # optional
-  # Default table name is "fun_with_flags_toggles".
+  ecto_table_name: "your_table_name", # optional, defaults to "fun_with_flags_toggles"
+  ecto_primary_key_type: :binary_id # optional, defaults to :id
+  # For the primary key type, see also: https://hexdocs.pm/ecto/3.10.3/Ecto.Schema.html#module-schema-attributes
 ```
 
 It's also necessary to create the DB table that will hold the feature flag data. To do that, [create a new migration](https://hexdocs.pm/ecto_sql/Mix.Tasks.Ecto.Gen.Migration.html) in your project and copy the contents of [the provided migration file](https://github.com/tompave/fun_with_flags/blob/master/priv/ecto_repo/migrations/00000000000000_create_feature_flags_table.exs). Then [run the migration](https://hexdocs.pm/ecto_sql/Mix.Tasks.Ecto.Migrate.html).
@@ -629,6 +632,13 @@ defmodule MyApp.Repo do
   end
 end
 ```
+
+#### Ecto Custom Primary Key Types
+
+The library defaults to using an integer (`bigserial`) as the type of the `id` primary key column. If, for any reason, you need the ID to be a UUID, you can configure it to be of type `:binary_id`. To do that, you need to:
+
+  1. Set the `:ecto_primary_key_type` configuration option to `:binary_id`.
+  2. Use `:binary_id` as the type of the `:id` column in the [provided migration file](https://github.com/tompave/fun_with_flags/blob/master/priv/ecto_repo/migrations/00000000000000_create_feature_flags_table.exs).
 
 ### PubSub Adapters
 
@@ -778,6 +788,9 @@ To setup the test DB for the Ecto persistence tests, run:
 MIX_ENV=test PERSISTENCE=ecto mix do ecto.create, ecto.migrate              # for postgres
 rm -rf _build/test/lib/fun_with_flags/
 MIX_ENV=test PERSISTENCE=ecto RDBMS=mysql mix do ecto.create, ecto.migrate  # for mysql
+rm -rf _build/test/lib/fun_with_flags/
+MIX_ENV=test PERSISTENCE=ecto RDBMS=sqlite mix do ecto.create, ecto.migrate  # for sqlite
+
 ```
 
 Then, to run all the tests:
@@ -808,3 +821,21 @@ This package uses the [credo](https://hex.pm/packages/credo) and [dialyxir](http
 mix credo
 mix dialyzer
 ```
+
+### Working with PubSub Locally
+
+It's possible to test the PubSub functionality locally, in `iex`.
+
+When using Redis, it's enough to start two `iex -S mix` sessions in two terminals, and they'll talk with one another via Redis.
+
+When using `Phoenix.PubSub` (which is typically the case with `Ecto`), then the process is similar but you must establish a connection between the two Erlang nodes running in the two terminals. There are a number of ways to do this, and the simplest is to do it manually within `iex`.
+
+Steps:
+
+1. Run `bin/console_pubsub foo` in one terminal.
+2. Run `bin/console_pubsub bar` in another terminal.
+3. In either terminal, grab the current name with `Node.self()`. (The name will also be shown in the `iex` prompts).
+4. In the other terminal, run `Node.connect(:"THE_OTHER_NODE_NAME")`. Keep in mind that the names are atoms.
+5. In either terminal, run `Node.list()` to check that there is a connection.
+
+Done that, modifying any flag data in either terminal will notify the other one via PubSub.

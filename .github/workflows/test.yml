@@ -15,21 +15,16 @@ jobs:
       fail-fast: false
       matrix:
         elixir:
+          - '1.15'
           - '1.14'
           - '1.13'
-          - '1.12'
         otp:
-          - '25.1'
-          - '25.0'
+          - '26.0'
+          - '25.3'
           - '24.3'
-          - '23.3'
         exclude:
-          - elixir: '1.14'
-            otp: '23.3'
-          - elixir: '1.12'
-            otp: '25.1'
-          - elixir: '1.12'
-            otp: '25.0'
+          - elixir: '1.13'
+            otp: '26.0'
 
     services:
       postgres:
@@ -94,6 +89,12 @@ jobs:
         run: |
           MIX_ENV=test PERSISTENCE=ecto RDBMS=mysql mix compile --warnings-as-errors
           MIX_ENV=test PERSISTENCE=ecto RDBMS=mysql mix do ecto.create, ecto.migrate
+          rm -rf _build/test/lib/fun_with_flags
+
+      - name: Create and migrate the DB on SQLite
+        run: |
+          MIX_ENV=test PERSISTENCE=ecto RDBMS=sqlite mix compile --warnings-as-errors
+          MIX_ENV=test PERSISTENCE=ecto RDBMS=sqlite mix do ecto.create, ecto.migrate
           rm -rf _build/test/lib/fun_with_flags
 
       - name: Run all tests
